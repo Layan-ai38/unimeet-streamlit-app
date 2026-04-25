@@ -140,6 +140,16 @@ p, label, div {
     font-size: 22px;
     font-weight: bold;
 }
+
+.workflow-card {
+    background-color: white;
+    padding: 20px;
+    border-radius: 14px;
+    border: 1px solid #DDF1FF;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.06);
+    margin-top: 15px;
+    margin-bottom: 15px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -251,8 +261,7 @@ def correct_intent(text, predicted_intent):
     ]
 
     # Priority order matters:
-    # cancellation and rescheduling must be checked before booking
-    # because they may also contain the word "appointment".
+    # cancel/reschedule must be checked before booking because they may contain "appointment".
     if any(keyword in text for keyword in cancel_keywords):
         return "cancel_appointment"
 
@@ -315,7 +324,7 @@ def correct_urgency_for_booking(text, predicted_urgency):
         "need help"
     ]
 
-    # Low first because "not urgent" contains the word "urgent"
+    # Low first because "not urgent" contains the word "urgent".
     if any(keyword in text for keyword in low_urgency_keywords):
         return "low"
 
@@ -429,7 +438,7 @@ def get_booked_appointments():
     return pd.read_sql_query(query, conn)
 
 
-def get_active_appointments():
+def get_active_appointments_by_student(student_name):
     query = """
     SELECT 
         appointments.appointment_id,
@@ -445,9 +454,10 @@ def get_active_appointments():
     JOIN instructors
     ON appointments.instructor_id = instructors.instructor_id
     WHERE appointments.status = 'booked'
+    AND LOWER(TRIM(appointments.student_name)) = LOWER(TRIM(?))
     ORDER BY appointments.appointment_id
     """
-    return pd.read_sql_query(query, conn)
+    return pd.read_sql_query(query, conn, params=(student_name,))
 
 # -----------------------------
 # Scheduling functions
@@ -516,7 +526,8 @@ def book_appointment(student_name, instructor_id, day, time, request_text, predi
     # Rule 3: The student cannot have two active appointments at the same time.
     cursor.execute("""
         SELECT * FROM appointments
-        WHERE student_name = ? AND day = ? AND time = ? AND status = 'booked'
+        WHERE LOWER(TRIM(student_name)) = LOWER(TRIM(?))
+        AND day = ? AND time = ? AND status = 'booked'
     """, (student_name, day, time))
 
     student_conflict = cursor.fetchone()
@@ -556,34 +567,38 @@ def book_appointment(student_name, instructor_id, day, time, request_text, predi
     return True, "Appointment booked successfully."
 
 
-def cancel_appointment(appointment_id):
+def cancel_appointment(appointment_id, student_name):
     cursor.execute("""
         UPDATE appointments
         SET status = 'cancelled'
-        WHERE appointment_id = ? AND status = 'booked'
-    """, (appointment_id,))
+        WHERE appointment_id = ?
+        AND status = 'booked'
+        AND LOWER(TRIM(student_name)) = LOWER(TRIM(?))
+    """, (appointment_id, student_name))
 
     conn.commit()
 
     if cursor.rowcount == 0:
-        return False, "Appointment not found or already cancelled."
+        return False, "Appointment not found for this student name or already cancelled."
 
     return True, "Appointment cancelled successfully."
 
 
-def reschedule_appointment(appointment_id, new_day, new_time):
+def reschedule_appointment(appointment_id, student_name, new_day, new_time):
     cursor.execute("""
         SELECT student_name, instructor_id
         FROM appointments
-        WHERE appointment_id = ? AND status = 'booked'
-    """, (appointment_id,))
+        WHERE appointment_id = ?
+        AND status = 'booked'
+        AND LOWER(TRIM(student_name)) = LOWER(TRIM(?))
+    """, (appointment_id, student_name))
 
     appointment = cursor.fetchone()
 
     if appointment is None:
-        return False, "Appointment not found or not active."
+        return False, "Appointment not found for this student name or not active."
 
-    student_name, instructor_id = appointment
+    current_student_name, instructor_id = appointment
 
     cursor.execute("""
         SELECT * FROM availability
@@ -608,20 +623,22 @@ def reschedule_appointment(appointment_id, new_day, new_time):
 
     cursor.execute("""
         SELECT * FROM appointments
-        WHERE student_name = ? AND day = ? AND time = ? AND status = 'booked'
+        WHERE LOWER(TRIM(student_name)) = LOWER(TRIM(?))
+        AND day = ? AND time = ? AND status = 'booked'
         AND appointment_id != ?
     """, (student_name, new_day, new_time, appointment_id))
 
     student_conflict = cursor.fetchone()
 
     if student_conflict is not None:
-        return False, "The student already has another appointment at the new time."
+        return False, "You already have another appointment at the new time."
 
     cursor.execute("""
         UPDATE appointments
         SET day = ?, time = ?, status = 'booked'
         WHERE appointment_id = ?
-    """, (new_day, new_time, appointment_id))
+        AND LOWER(TRIM(student_name)) = LOWER(TRIM(?))
+    """, (new_day, new_time, appointment_id, student_name))
 
     conn.commit()
 
@@ -639,7 +656,7 @@ st.markdown("""
     <p style="font-size:16px;">
         UniMeet helps students manage appointment requests with instructors using two trained machine learning models:
         an <b>Intent Classification Model</b> and an <b>Urgency Classification Model</b>.
-        The intent model routes the request to the correct action, while the urgency model is used only for booking requests
+        The intent model routes the request to the correct workflow, while the urgency model is used only for booking requests
         to support priority-aware scheduling decisions.
     </p>
 </div>
@@ -682,30 +699,28 @@ st.markdown("<br>", unsafe_allow_html=True)
 # -----------------------------
 # Tabs
 # -----------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "Request Assistant",
+tab1, tab2, tab3 = st.tabs([
+    "Smart Request Assistant",
     "Appointments Dashboard",
-    "Cancel Appointment",
-    "Reschedule Appointment",
     "About AI Models"
 ])
 
 # -----------------------------
-# Tab 1: Request Assistant
+# Tab 1: Smart Request Assistant
 # -----------------------------
 with tab1:
-    st.header("Request Assistant")
+    st.header("Smart Request Assistant")
 
     st.write(
-        "Write your request below. The AI intent model will analyze whether the request is for booking, "
-        "cancellation, rescheduling, availability checking, or a general inquiry."
+        "Write what you want to do in one sentence. "
+        "The AI intent model will route you to the correct workflow automatically."
     )
 
     student_name = st.text_input("Student Name", placeholder="Enter your name")
 
     request_text = st.text_area(
-        "Appointment Request",
-        placeholder="Example: I urgently need to meet Dr. Eman about my project."
+        "Your Request",
+        placeholder="Example: I want to book an appointment with Dr. Eman about my project."
     )
 
     if "analyzed" not in st.session_state:
@@ -717,7 +732,7 @@ with tab1:
             st.session_state.analyzed = False
 
         elif not request_text.strip():
-            st.error("Please enter the appointment request.")
+            st.error("Please enter your request.")
             st.session_state.analyzed = False
 
         else:
@@ -734,60 +749,20 @@ with tab1:
         st.markdown("### AI Request Analysis")
         st.info(f"Predicted Intent: {predicted_intent}")
 
-        if predicted_intent == "cancel_appointment":
-            st.warning(
-                "This request looks like a cancellation request. "
-                "The system will not create a new appointment. "
-                "Please use the Cancel Appointment tab to cancel an existing appointment."
-            )
-
-        elif predicted_intent == "reschedule_appointment":
-            st.warning(
-                "This request looks like a rescheduling request. "
-                "The system will not create a new appointment. "
-                "Please use the Reschedule Appointment tab to change an existing appointment."
-            )
-
-        elif predicted_intent == "check_availability":
-            st.info(
-                "This request looks like an availability inquiry. "
-                "You can review the instructor office-hour slots below. "
-                "If you want to book, rewrite the request as a clear booking request."
-            )
-
-            instructors_df = get_instructors()
-            instructor_options = {
-                f"{row['name']} - {row['department']}": row["instructor_id"]
-                for _, row in instructors_df.iterrows()
-            }
-
-            selected_instructor_label = st.selectbox(
-                "Select Instructor to View Slots",
-                list(instructor_options.keys()),
-                key="availability_instructor"
-            )
-
-            selected_instructor_id = instructor_options[selected_instructor_label]
-            slots_df = get_slots_with_status(selected_instructor_id)
-
-            st.dataframe(slots_df, use_container_width=True)
-
-        elif predicted_intent == "general_inquiry":
-            st.info(
-                "This request looks like a general inquiry. "
-                "The system will not create an appointment unless the request clearly indicates booking."
-            )
-
-        elif predicted_intent == "book_appointment":
+        # -------------------------
+        # Booking workflow
+        # -------------------------
+        if predicted_intent == "book_appointment":
             predicted_urgency = predict_urgency_for_booking(st.session_state.request_text)
 
-            st.markdown("### Booking Request Detected")
-            st.info(f"Predicted Urgency: {predicted_urgency}")
+            st.markdown("""
+            <div class="workflow-card">
+                <h3>Booking Workflow</h3>
+                <p>The request was classified as a booking request. The urgency model is now used to support scheduling priority.</p>
+            </div>
+            """, unsafe_allow_html=True)
 
-            st.write(
-                "Please select an instructor and an office-hour slot. "
-                "Booked slots are still displayed so the system can provide urgency-aware recommendations."
-            )
+            st.info(f"Predicted Urgency: {predicted_urgency}")
 
             instructors_df = get_instructors()
 
@@ -841,9 +816,191 @@ with tab1:
                     else:
                         st.warning(message)
 
+        # -------------------------
+        # Cancel workflow
+        # -------------------------
+        elif predicted_intent == "cancel_appointment":
+            st.markdown("""
+            <div class="workflow-card">
+                <h3>Cancellation Workflow</h3>
+                <p>The request was classified as a cancellation request. The system will only show active appointments that match the entered student name.</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+            active_appointments = get_active_appointments_by_student(
+                st.session_state.student_name
+            )
+
+            if active_appointments.empty:
+                st.info(
+                    "No active appointment was found for this student name. "
+                    "Please check the name or book an appointment first."
+                )
+            else:
+                appointment_options = {
+                    f"ID {row['appointment_id']} | {row['student_name']} with {row['instructor_name']} on {row['day']} at {row['time']}": row["appointment_id"]
+                    for _, row in active_appointments.iterrows()
+                }
+
+                selected_cancel_label = st.selectbox(
+                    "Select Appointment to Cancel",
+                    list(appointment_options.keys()),
+                    key="smart_cancel"
+                )
+
+                selected_appointment_id = appointment_options[selected_cancel_label]
+
+                if st.button("Confirm Cancellation"):
+                    success, message = cancel_appointment(
+                        selected_appointment_id,
+                        st.session_state.student_name
+                    )
+
+                    if success:
+                        st.success(message)
+                    else:
+                        st.error(message)
+
+        # -------------------------
+        # Reschedule workflow
+        # -------------------------
+        elif predicted_intent == "reschedule_appointment":
+            st.markdown("""
+            <div class="workflow-card">
+                <h3>Rescheduling Workflow</h3>
+                <p>The request was classified as a rescheduling request. The system will only show active appointments that match the entered student name.</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+            active_appointments = get_active_appointments_by_student(
+                st.session_state.student_name
+            )
+
+            if active_appointments.empty:
+                st.info(
+                    "No active appointment was found for this student name. "
+                    "Please check the name or book an appointment first."
+                )
+            else:
+                appointment_options = {
+                    f"ID {row['appointment_id']} | {row['student_name']} with {row['instructor_name']} on {row['day']} at {row['time']}": row["appointment_id"]
+                    for _, row in active_appointments.iterrows()
+                }
+
+                selected_reschedule_label = st.selectbox(
+                    "Select Appointment to Reschedule",
+                    list(appointment_options.keys()),
+                    key="smart_reschedule"
+                )
+
+                selected_appointment_id = appointment_options[selected_reschedule_label]
+
+                appointment_row = active_appointments[
+                    active_appointments["appointment_id"] == selected_appointment_id
+                ].iloc[0]
+
+                instructor_name = appointment_row["instructor_name"]
+
+                instructor_id_query = """
+                SELECT instructor_id FROM instructors
+                WHERE name = ?
+                """
+
+                instructor_id_df = pd.read_sql_query(
+                    instructor_id_query,
+                    conn,
+                    params=(instructor_name,)
+                )
+
+                instructor_id = int(instructor_id_df.iloc[0]["instructor_id"])
+
+                available_slots = get_available_slots(instructor_id)
+
+                if available_slots.empty:
+                    st.warning("No available slots for rescheduling.")
+                else:
+                    slot_options = {
+                        f"{row['day']} at {row['time']}": (row["day"], row["time"])
+                        for _, row in available_slots.iterrows()
+                    }
+
+                    selected_new_slot_label = st.selectbox(
+                        "Select New Available Slot",
+                        list(slot_options.keys()),
+                        key="smart_new_slot"
+                    )
+
+                    new_day, new_time = slot_options[selected_new_slot_label]
+
+                    if st.button("Confirm Reschedule"):
+                        success, message = reschedule_appointment(
+                            selected_appointment_id,
+                            st.session_state.student_name,
+                            new_day,
+                            new_time
+                        )
+
+                        if success:
+                            st.success(message)
+                        else:
+                            st.error(message)
+
+        # -------------------------
+        # Availability workflow
+        # -------------------------
+        elif predicted_intent == "check_availability":
+            st.markdown("""
+            <div class="workflow-card">
+                <h3>Availability Workflow</h3>
+                <p>The request was classified as an availability inquiry. You can view instructor office-hour slots below.</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+            instructors_df = get_instructors()
+
+            instructor_options = {
+                f"{row['name']} - {row['department']}": row["instructor_id"]
+                for _, row in instructors_df.iterrows()
+            }
+
+            selected_instructor_label = st.selectbox(
+                "Select Instructor to View Slots",
+                list(instructor_options.keys()),
+                key="availability_instructor"
+            )
+
+            selected_instructor_id = instructor_options[selected_instructor_label]
+            slots_df = get_slots_with_status(selected_instructor_id)
+
+            if slots_df.empty:
+                st.info("No office-hour slots found for this instructor.")
+            else:
+                st.dataframe(slots_df, use_container_width=True)
+
+            st.info(
+                "If you want to book one of these slots, write a clear booking request such as: "
+                "'I want to book an appointment with my instructor.'"
+            )
+
+        # -------------------------
+        # General inquiry workflow
+        # -------------------------
+        elif predicted_intent == "general_inquiry":
+            st.markdown("""
+            <div class="workflow-card">
+                <h3>General Inquiry</h3>
+                <p>The request was classified as a general inquiry. No appointment action will be performed.</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+            st.info(
+                "UniMeet can help with booking, cancelling, rescheduling, and checking instructor availability. "
+                "Please write a more specific request if you want the system to perform one of these actions."
+            )
+
         else:
             st.warning(
-                "The request could not be clearly routed. Please rewrite the request or use the correct tab."
+                "The request could not be clearly routed. Please rewrite the request or try a clearer action."
             )
 
 # -----------------------------
@@ -865,113 +1022,9 @@ with tab2:
         st.dataframe(appointments_df, use_container_width=True)
 
 # -----------------------------
-# Tab 3: Cancel Appointment
+# Tab 3: About AI Models
 # -----------------------------
 with tab3:
-    st.header("Cancel Appointment")
-
-    appointments_df = get_booked_appointments()
-    active_appointments = appointments_df[appointments_df["status"] == "booked"]
-
-    if active_appointments.empty:
-        st.info("No active appointments to cancel.")
-    else:
-        appointment_options = {
-            f"ID {row['appointment_id']} | {row['student_name']} with {row['instructor_name']} on {row['day']} at {row['time']}": row["appointment_id"]
-            for _, row in active_appointments.iterrows()
-        }
-
-        selected_cancel_label = st.selectbox(
-            "Select Appointment to Cancel",
-            list(appointment_options.keys())
-        )
-
-        selected_appointment_id = appointment_options[selected_cancel_label]
-
-        if st.button("Cancel Appointment"):
-            success, message = cancel_appointment(selected_appointment_id)
-
-            if success:
-                st.success(message)
-            else:
-                st.error(message)
-
-# -----------------------------
-# Tab 4: Reschedule Appointment
-# -----------------------------
-with tab4:
-    st.header("Reschedule Appointment")
-
-    appointments_df = get_booked_appointments()
-    active_appointments = appointments_df[appointments_df["status"] == "booked"]
-
-    if active_appointments.empty:
-        st.info("No active appointments to reschedule.")
-    else:
-        appointment_options = {
-            f"ID {row['appointment_id']} | {row['student_name']} with {row['instructor_name']} on {row['day']} at {row['time']}": row["appointment_id"]
-            for _, row in active_appointments.iterrows()
-        }
-
-        selected_reschedule_label = st.selectbox(
-            "Select Appointment to Reschedule",
-            list(appointment_options.keys())
-        )
-
-        selected_appointment_id = appointment_options[selected_reschedule_label]
-
-        appointment_row = active_appointments[
-            active_appointments["appointment_id"] == selected_appointment_id
-        ].iloc[0]
-
-        instructor_name = appointment_row["instructor_name"]
-
-        instructor_id_query = """
-        SELECT instructor_id FROM instructors
-        WHERE name = ?
-        """
-
-        instructor_id_df = pd.read_sql_query(
-            instructor_id_query,
-            conn,
-            params=(instructor_name,)
-        )
-
-        instructor_id = int(instructor_id_df.iloc[0]["instructor_id"])
-
-        available_slots = get_available_slots(instructor_id)
-
-        if available_slots.empty:
-            st.warning("No available slots for rescheduling.")
-        else:
-            slot_options = {
-                f"{row['day']} at {row['time']}": (row["day"], row["time"])
-                for _, row in available_slots.iterrows()
-            }
-
-            selected_new_slot_label = st.selectbox(
-                "Select New Available Slot",
-                list(slot_options.keys())
-            )
-
-            new_day, new_time = slot_options[selected_new_slot_label]
-
-            if st.button("Reschedule Appointment"):
-                success, message = reschedule_appointment(
-                    selected_appointment_id,
-                    new_day,
-                    new_time
-                )
-
-                if success:
-                    st.success(message)
-                else:
-                    st.error(message)
-
-# -----------------------------
-# Tab 5: About AI Models
-# -----------------------------
-with tab5:
     st.header("About the AI Components")
 
     st.markdown("""
@@ -987,8 +1040,8 @@ with tab5:
     - check_availability
     - general_inquiry
 
-    The intent model is used as a request router. If the request is not a booking request,
-    the system does not create an appointment and guides the user to the correct action.
+    The intent model is used as an AI request router. Instead of asking users to manually choose an action,
+    the system lets the user write a natural-language request, then automatically shows the correct workflow.
 
     ### 2. Urgency Classification Model
     This model predicts the urgency level of booking requests only.
@@ -1018,10 +1071,11 @@ with tab5:
 
     ### Non-ML Component
     The scheduling engine uses deterministic rules to:
-    - route non-booking requests
+    - route requests to the correct workflow
     - check instructor office hours
     - prevent instructor time conflicts
     - prevent student time conflicts
+    - restrict cancellation and rescheduling to the entered student name
     - compare urgency levels when a booking conflict occurs
     - provide priority-aware recommendations
     - save, cancel, and reschedule appointments
