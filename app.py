@@ -173,13 +173,114 @@ def clean_text(text):
     return text
 
 # -----------------------------
+# Limited rule-based correction
+# -----------------------------
+def apply_rule_based_correction(text, predicted_intent, predicted_urgency):
+    text = clean_text(text)
+
+    # -----------------------------
+    # Intent correction rules
+    # These rules correct only clear and common student phrases.
+    # -----------------------------
+    cancel_keywords = [
+        "cancel", "delete my booking", "remove my booking",
+        "cannot attend", "can't attend", "cant attend",
+        "i cannot come", "i can't come", "i cant come",
+        "no longer need"
+    ]
+
+    reschedule_keywords = [
+        "reschedule", "change my appointment", "change my meeting",
+        "move my appointment", "move my meeting",
+        "another time", "different time", "different slot",
+        "shift my meeting", "postpone"
+    ]
+
+    availability_keywords = [
+        "available", "availability", "office hours",
+        "free time", "open slots", "available slots",
+        "what times", "when is", "earliest available"
+    ]
+
+    booking_keywords = [
+        "book", "schedule", "appointment",
+        "meet", "meeting",
+        "see dr", "see doctor", "see my instructor",
+        "need to see", "want to see",
+        "talk to", "speak with", "discuss"
+    ]
+
+    # Priority order matters
+    if any(keyword in text for keyword in cancel_keywords):
+        predicted_intent = "cancel_appointment"
+
+    elif any(keyword in text for keyword in reschedule_keywords):
+        predicted_intent = "reschedule_appointment"
+
+    elif any(keyword in text for keyword in booking_keywords):
+        predicted_intent = "book_appointment"
+
+    elif any(keyword in text for keyword in availability_keywords):
+        predicted_intent = "check_availability"
+
+    # -----------------------------
+    # Urgency correction rules
+    # Only clear urgency phrases are corrected.
+    # -----------------------------
+    low_urgency_keywords = [
+        "not urgent", "no rush", "whenever possible",
+        "when you have time", "later", "next week",
+        "sometime", "when available", "just asking"
+    ]
+
+    high_urgency_keywords = [
+        "urgent", "urgently", "emergency",
+        "asap", "as soon as possible",
+        "immediate", "immediately",
+        "now", "right now", "today",
+        "very important", "important",
+        "critical", "serious issue",
+        "deadline", "final project",
+        "final exam", "must meet",
+        "need to see", "cannot wait"
+    ]
+
+    normal_urgency_keywords = [
+        "tomorrow", "this week",
+        "assignment", "project",
+        "lecture", "course material",
+        "need help"
+    ]
+
+    # Low first because "not urgent" contains the word "urgent"
+    if any(keyword in text for keyword in low_urgency_keywords):
+        predicted_urgency = "low"
+
+    elif any(keyword in text for keyword in high_urgency_keywords):
+        predicted_urgency = "high"
+
+    elif any(keyword in text for keyword in normal_urgency_keywords):
+        if predicted_urgency != "high":
+            predicted_urgency = "normal"
+
+    return predicted_intent, predicted_urgency
+
+# -----------------------------
 # AI prediction
 # -----------------------------
 def predict_request(request_text):
     cleaned_text = clean_text(request_text)
+
     predicted_intent = intent_model.predict([cleaned_text])[0]
     predicted_urgency = urgency_model.predict([cleaned_text])[0]
-    return predicted_intent, predicted_urgency
+
+    corrected_intent, corrected_urgency = apply_rule_based_correction(
+        cleaned_text,
+        predicted_intent,
+        predicted_urgency
+    )
+
+    return corrected_intent, corrected_urgency
 
 # -----------------------------
 # Urgency ranking helper
@@ -758,6 +859,12 @@ with tab5:
     - low
     - normal
     - high
+
+    ### Hybrid Inference Approach
+    The trained machine learning models generate the initial predictions.
+    A limited rule-based correction layer is then applied only for clear cases such as urgent requests,
+    cancellations, rescheduling, and availability inquiries. This improves reliability while keeping
+    the trained ML models as the main prediction component.
 
     ### ML Pipeline
     The machine learning pipeline includes:
