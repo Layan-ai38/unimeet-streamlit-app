@@ -277,7 +277,6 @@ def correct_urgency_for_booking(text, predicted_urgency):
         "whenever possible",
         "when you have time",
         "later",
-        "next week",
         "sometime",
         "when available",
         "just asking"
@@ -302,13 +301,13 @@ def correct_urgency_for_booking(text, predicted_urgency):
         "final project",
         "final exam",
         "must meet",
-        "need to see",
         "cannot wait"
     ]
 
     normal_urgency_keywords = [
         "tomorrow",
         "this week",
+        "next week",
         "assignment",
         "project",
         "lecture",
@@ -706,7 +705,7 @@ with tab1:
 
     request_text = st.text_area(
         "Appointment Request",
-        placeholder="Example: I urgently need to meet Dr. Sara about my project."
+        placeholder="Example: I urgently need to meet Dr. Eman about my project."
     )
 
     if "analyzed" not in st.session_state:
@@ -1035,8 +1034,13 @@ with tab5:
     - If both requests have the same urgency, the system does not double-book the slot and recommends choosing another slot or contacting the instructor if needed.
 
     The system does not automatically cancel another student's appointment. This keeps the scheduling process fair while still using AI predictions to support decision-making.
+
+    ### Model Performance
+    The final models were trained using an expanded dataset of 1120 samples.
+    - Intent Classification Accuracy: 99.11%
+    - Urgency Classification Accuracy: 94.64%
     """)
 
     st.success("Final selected model: TF-IDF + Linear SVM")
-    st.info("Intent Classification Accuracy: 98.39%")
-    st.info("Urgency Classification Accuracy: 91.94%")
+    st.info("Intent Classification Accuracy: 99.11%")
+    st.info("Urgency Classification Accuracy: 94.64%")
