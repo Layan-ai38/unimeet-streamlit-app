@@ -18,29 +18,24 @@ st.set_page_config(
 # -----------------------------
 st.markdown("""
 <style>
-/* Main app background */
 .stApp {
     background-color: #F7FBFF;
     color: #0F2747;
 }
 
-/* Main content */
 .block-container {
     padding-top: 2rem;
     padding-bottom: 2rem;
 }
 
-/* Titles */
 h1, h2, h3, h4 {
     color: #0F2747 !important;
 }
 
-/* Text */
 p, label, div {
     color: #0F2747;
 }
 
-/* Tabs */
 .stTabs [data-baseweb="tab"] {
     background-color: #EAF6FF;
     color: #0F2747;
@@ -55,7 +50,6 @@ p, label, div {
     color: white !important;
 }
 
-/* Buttons */
 .stButton > button {
     background-color: #0F2747 !important;
     color: #FFFFFF !important;
@@ -92,16 +86,6 @@ p, label, div {
     outline: none !important;
 }
 
-.stButton > button:focus p,
-.stButton > button:active p,
-.stButton > button:focus span,
-.stButton > button:active span,
-.stButton > button:focus div,
-.stButton > button:active div {
-    color: #FFFFFF !important;
-}
-
-/* Input boxes */
 .stTextInput input,
 .stTextArea textarea {
     border-radius: 10px !important;
@@ -110,7 +94,6 @@ p, label, div {
     color: #0F2747 !important;
 }
 
-/* Select boxes */
 .stSelectbox div[data-baseweb="select"] {
     border-radius: 10px !important;
     border: 1px solid #B9DFFF !important;
@@ -118,19 +101,16 @@ p, label, div {
     color: #0F2747 !important;
 }
 
-/* Dataframe container */
 [data-testid="stDataFrame"] {
     background-color: white;
     border-radius: 12px;
     padding: 8px;
 }
 
-/* Alert boxes */
 .stAlert {
     border-radius: 10px;
 }
 
-/* Custom cards */
 .info-card {
     background-color: white;
     padding: 22px;
@@ -202,6 +182,17 @@ def predict_request(request_text):
     return predicted_intent, predicted_urgency
 
 # -----------------------------
+# Urgency ranking helper
+# -----------------------------
+def get_urgency_rank(urgency):
+    urgency_rank = {
+        "low": 1,
+        "normal": 2,
+        "high": 3
+    }
+    return urgency_rank.get(str(urgency).lower(), 0)
+
+# -----------------------------
 # Database helper functions
 # -----------------------------
 def get_instructors():
@@ -224,6 +215,30 @@ def get_available_slots(instructor_id):
         AND appointments.time = availability.time
         AND appointments.status = 'booked'
     )
+    ORDER BY availability.day, availability.time
+    """
+    return pd.read_sql_query(query, conn, params=(instructor_id,))
+
+def get_slots_with_status(instructor_id):
+    query = """
+    SELECT 
+        availability.slot_id,
+        availability.day,
+        availability.time,
+        CASE
+            WHEN appointments.appointment_id IS NULL THEN 'Available'
+            ELSE 'Booked'
+        END AS slot_status,
+        appointments.student_name AS existing_student,
+        appointments.predicted_intent AS existing_intent,
+        appointments.predicted_urgency AS existing_urgency
+    FROM availability
+    LEFT JOIN appointments
+    ON availability.instructor_id = appointments.instructor_id
+    AND availability.day = appointments.day
+    AND availability.time = appointments.time
+    AND appointments.status = 'booked'
+    WHERE availability.instructor_id = ?
     ORDER BY availability.day, availability.time
     """
     return pd.read_sql_query(query, conn, params=(instructor_id,))
@@ -273,6 +288,7 @@ def get_active_appointments():
 def book_appointment(student_name, instructor_id, day, time, request_text):
     predicted_intent, predicted_urgency = predict_request(request_text)
 
+    # Rule 1: The selected time must be within the instructor's office hours.
     cursor.execute("""
         SELECT * FROM availability
         WHERE instructor_id = ? AND day = ? AND time = ?
@@ -281,18 +297,61 @@ def book_appointment(student_name, instructor_id, day, time, request_text):
     available_slot = cursor.fetchone()
 
     if available_slot is None:
-        return False, "This time is not within the instructor's office hours.", predicted_intent, predicted_urgency
+        return (
+            False,
+            "This time is not within the instructor's office hours. Please select a valid office-hour slot.",
+            predicted_intent,
+            predicted_urgency
+        )
 
+    # Rule 2: Check whether this instructor slot is already booked.
     cursor.execute("""
-        SELECT * FROM appointments
+        SELECT student_name, predicted_urgency
+        FROM appointments
         WHERE instructor_id = ? AND day = ? AND time = ? AND status = 'booked'
     """, (instructor_id, day, time))
 
     instructor_conflict = cursor.fetchone()
 
     if instructor_conflict is not None:
-        return False, "This slot is already booked with this instructor.", predicted_intent, predicted_urgency
+        existing_student, existing_urgency = instructor_conflict
 
+        new_priority = get_urgency_rank(predicted_urgency)
+        existing_priority = get_urgency_rank(existing_urgency)
+
+        # New request has higher urgency than the existing appointment.
+        if new_priority > existing_priority:
+            message = (
+                f"This slot is already booked by another student with a {existing_urgency}-urgency appointment. "
+                f"Your request was classified as {predicted_urgency}, which has higher priority. "
+                "The system cannot automatically cancel another student's appointment, but it recommends contacting the instructor for priority review or choosing another available slot."
+            )
+
+        # New request has lower urgency than the existing appointment.
+        elif new_priority < existing_priority:
+            message = (
+                f"This slot is already booked by a {existing_urgency}-urgency appointment, "
+                f"which has higher priority than your {predicted_urgency}-urgency request. "
+                "The system recommends choosing another available slot."
+            )
+
+        # Same urgency level.
+        else:
+            if predicted_urgency == "high":
+                message = (
+                    "This slot is already booked by another high-urgency appointment. "
+                    "The system cannot book two students in the same slot. "
+                    "If your case needs immediate attention, please contact the instructor for review or choose another available slot."
+                )
+            else:
+                message = (
+                    f"This slot is already booked by another {existing_urgency}-urgency appointment. "
+                    "Please choose another available slot."
+                )
+
+        return False, message, predicted_intent, predicted_urgency
+
+    # Rule 3: The student cannot have two active appointments at the same time.
     cursor.execute("""
         SELECT * FROM appointments
         WHERE student_name = ? AND day = ? AND time = ? AND status = 'booked'
@@ -301,8 +360,14 @@ def book_appointment(student_name, instructor_id, day, time, request_text):
     student_conflict = cursor.fetchone()
 
     if student_conflict is not None:
-        return False, "You already have another appointment at this time.", predicted_intent, predicted_urgency
+        return (
+            False,
+            "You already have another appointment at this time. Please choose a different slot.",
+            predicted_intent,
+            predicted_urgency
+        )
 
+    # Rule 4: Save the appointment if all checks pass.
     cursor.execute("""
         INSERT INTO appointments (
             student_name,
@@ -377,7 +442,7 @@ def reschedule_appointment(appointment_id, new_day, new_time):
     instructor_conflict = cursor.fetchone()
 
     if instructor_conflict is not None:
-        return False, "The new slot is already booked with this instructor."
+        return False, "The new slot is already booked with this instructor. Please choose another available slot."
 
     cursor.execute("""
         SELECT * FROM appointments
@@ -412,7 +477,8 @@ st.markdown("""
     <p style="font-size:16px;">
         UniMeet helps students book appointments with instructors using two trained machine learning models:
         an <b>Intent Classification Model</b> and an <b>Urgency Classification Model</b>.
-        The system also applies rule-based scheduling checks to validate instructor office hours and prevent appointment conflicts.
+        The system also applies rule-based scheduling checks to validate instructor office hours,
+        prevent appointment conflicts, and provide urgency-aware recommendations when a requested slot is already booked.
     </p>
 </div>
 """, unsafe_allow_html=True)
@@ -426,7 +492,7 @@ active_appointments_df = appointments_df_all[appointments_df_all["status"] == "b
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    st.markdown(f"""
+    st.markdown("""
     <div class="metric-card">
         <div class="metric-title">AI Models</div>
         <div class="metric-value">2</div>
@@ -442,7 +508,7 @@ with col2:
     """, unsafe_allow_html=True)
 
 with col3:
-    st.markdown(f"""
+    st.markdown("""
     <div class="metric-card">
         <div class="metric-title">Database</div>
         <div class="metric-value">SQLite</div>
@@ -468,6 +534,11 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 with tab1:
     st.header("Book a New Appointment")
 
+    st.write(
+        "All instructor office-hour slots are shown below. If a slot is already booked, "
+        "the system still shows it so that urgency-aware recommendations can be provided."
+    )
+
     instructors_df = get_instructors()
 
     student_name = st.text_input("Student Name", placeholder="Enter your name")
@@ -489,18 +560,23 @@ with tab1:
 
     selected_instructor_id = instructor_options[selected_instructor_label]
 
-    available_slots = get_available_slots(selected_instructor_id)
+    slots_df = get_slots_with_status(selected_instructor_id)
 
-    if available_slots.empty:
-        st.warning("No available slots for this instructor.")
+    if slots_df.empty:
+        st.warning("No office-hour slots found for this instructor.")
     else:
-        slot_options = {
-            f"{row['day']} at {row['time']}": (row["day"], row["time"])
-            for _, row in available_slots.iterrows()
-        }
+        slot_options = {}
+
+        for _, row in slots_df.iterrows():
+            if row["slot_status"] == "Available":
+                label = f"{row['day']} at {row['time']} — Available"
+            else:
+                label = f"{row['day']} at {row['time']} — Booked ({row['existing_urgency']} urgency)"
+
+            slot_options[label] = (row["day"], row["time"])
 
         selected_slot_label = st.selectbox(
-            "Select Available Slot",
+            "Select Office-Hour Slot",
             list(slot_options.keys())
         )
 
@@ -532,7 +608,7 @@ with tab1:
                 if success:
                     st.success(message)
                 else:
-                    st.error(message)
+                    st.warning(message)
 
 # -----------------------------
 # Tab 2: Dashboard
@@ -638,7 +714,7 @@ with tab4:
             }
 
             selected_new_slot_label = st.selectbox(
-                "Select New Slot",
+                "Select New Available Slot",
                 list(slot_options.keys())
             )
 
@@ -698,7 +774,18 @@ with tab5:
     - check instructor office hours
     - prevent instructor time conflicts
     - prevent student time conflicts
+    - compare urgency levels when a conflict occurs
+    - provide priority-aware recommendations
     - save, cancel, and reschedule appointments
+
+    ### Urgency-Aware Conflict Handling
+    If a student selects a slot that is already booked, the system compares the urgency level of the new request with the urgency level of the existing appointment.
+
+    - If the new request has higher urgency, the system recommends contacting the instructor for priority review.
+    - If the existing appointment has higher urgency, the system recommends choosing another available slot.
+    - If both requests have the same urgency, the system does not double-book the slot and recommends choosing another slot or contacting the instructor if needed.
+
+    The system does not automatically cancel another student's appointment. This keeps the scheduling process fair while still using AI predictions to support decision-making.
     """)
 
     st.success("Final selected model: TF-IDF + Linear SVM")
