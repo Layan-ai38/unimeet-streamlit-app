@@ -150,6 +150,14 @@ p, label, div {
     margin-top: 15px;
     margin-bottom: 15px;
 }
+
+.example-card {
+    background-color: #EAF6FF;
+    padding: 18px;
+    border-radius: 14px;
+    border: 1px solid #B9DFFF;
+    margin-bottom: 20px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -711,10 +719,21 @@ tab1, tab2, tab3 = st.tabs([
 with tab1:
     st.header("Smart Request Assistant")
 
-    st.write(
-        "Write what you want to do in one sentence. "
-        "The AI intent model will route you to the correct workflow automatically."
-    )
+    st.markdown("""
+    <div class="example-card">
+        <h3>How to use UniMeet</h3>
+        <p>
+            Write an appointment-related request in one sentence. The AI intent model will understand your request
+            and automatically show the correct workflow.
+        </p>
+        <ul>
+            <li><b>Booking:</b> "I want to book an appointment with Dr. Eman about my project."</li>
+            <li><b>Cancellation:</b> "I can't attend my appointment."</li>
+            <li><b>Rescheduling:</b> "Move my appointment to another day."</li>
+            <li><b>Availability:</b> "When is Dr. Eman available this week?"</li>
+        </ul>
+    </div>
+    """, unsafe_allow_html=True)
 
     student_name = st.text_input("Student Name", placeholder="Enter your name")
 
@@ -975,7 +994,7 @@ with tab1:
             if slots_df.empty:
                 st.info("No office-hour slots found for this instructor.")
             else:
-                st.dataframe(slots_df, use_container_width=True)
+                st.dataframe(slots_df, width="stretch")
 
             st.info(
                 "If you want to book one of these slots, write a clear booking request such as: "
@@ -983,24 +1002,34 @@ with tab1:
             )
 
         # -------------------------
-        # General inquiry workflow
+        # Unsupported request workflow
         # -------------------------
         elif predicted_intent == "general_inquiry":
             st.markdown("""
             <div class="workflow-card">
-                <h3>General Inquiry</h3>
-                <p>The request was classified as a general inquiry. No appointment action will be performed.</p>
+                <h3>Unsupported Request</h3>
+                <p>
+                    The request was classified as outside the supported appointment workflows.
+                    No appointment action will be performed.
+                </p>
             </div>
             """, unsafe_allow_html=True)
 
+            st.warning(
+                "This service is currently not available. "
+                "UniMeet only supports appointment-related requests such as booking, cancellation, "
+                "rescheduling, and availability checking."
+            )
+
             st.info(
-                "UniMeet can help with booking, cancelling, rescheduling, and checking instructor availability. "
-                "Please write a more specific request if you want the system to perform one of these actions."
+                "If your request is related to appointments, please try rephrasing it. "
+                "For example: 'I want to book an appointment', 'I can't attend my appointment', "
+                "'Move my appointment to another day', or 'When is Dr. Eman available?'"
             )
 
         else:
             st.warning(
-                "The request could not be clearly routed. Please rewrite the request or try a clearer action."
+                "The request could not be clearly routed. Please rewrite the request using an appointment-related action."
             )
 
 # -----------------------------
@@ -1019,7 +1048,7 @@ with tab2:
     if appointments_df.empty:
         st.info("No appointments found.")
     else:
-        st.dataframe(appointments_df, use_container_width=True)
+        st.dataframe(appointments_df, width="stretch")
 
 # -----------------------------
 # Tab 3: About AI Models
@@ -1028,7 +1057,8 @@ with tab3:
     st.header("About the AI Components")
 
     st.markdown("""
-    UniMeet is not only a booking interface. It uses two trained machine learning models:
+    UniMeet is a domain-specific AI application for appointment scheduling. It is not a general chatbot.
+    It supports appointment-related requests only.
 
     ### 1. Intent Classification Model
     This model predicts the purpose of the student request.
@@ -1042,6 +1072,9 @@ with tab3:
 
     The intent model is used as an AI request router. Instead of asking users to manually choose an action,
     the system lets the user write a natural-language request, then automatically shows the correct workflow.
+
+    The general_inquiry class is kept as a safety category. If the user writes something outside the supported appointment workflows,
+    the system does not perform any appointment action and asks the user to write an appointment-related request.
 
     ### 2. Urgency Classification Model
     This model predicts the urgency level of booking requests only.
