@@ -175,112 +175,174 @@ def clean_text(text):
 # -----------------------------
 # Limited rule-based correction
 # -----------------------------
-def apply_rule_based_correction(text, predicted_intent, predicted_urgency):
+def correct_intent(text, predicted_intent):
     text = clean_text(text)
 
-    # -----------------------------
-    # Intent correction rules
-    # These rules correct only clear and common student phrases.
-    # -----------------------------
     cancel_keywords = [
-        "cancel", "delete my booking", "remove my booking",
-        "cannot attend", "can't attend", "cant attend",
-        "i cannot come", "i can't come", "i cant come",
-        "no longer need"
+        "cancel",
+        "delete my booking",
+        "remove my booking",
+        "cannot attend",
+        "can't attend",
+        "cant attend",
+        "i cannot come",
+        "i can't come",
+        "i cant come",
+        "no longer need",
+        "can't show up",
+        "cant show up",
+        "cannot show up",
+        "i can't show up",
+        "i cant show up",
+        "i cannot show up",
+        "not showing up",
+        "will not show up",
+        "can't make it",
+        "cant make it",
+        "cannot make it",
+        "won't make it",
+        "wont make it"
     ]
 
     reschedule_keywords = [
-        "reschedule", "change my appointment", "change my meeting",
-        "move my appointment", "move my meeting",
-        "another time", "different time", "different slot",
-        "shift my meeting", "postpone"
+        "reschedule",
+        "change my appointment",
+        "change my meeting",
+        "move my appointment",
+        "move my meeting",
+        "move my appointment to",
+        "move my meeting to",
+        "another time",
+        "another day",
+        "different time",
+        "different day",
+        "different slot",
+        "shift my meeting",
+        "shift my appointment",
+        "postpone"
     ]
 
     availability_keywords = [
-        "available", "availability", "office hours",
-        "free time", "open slots", "available slots",
-        "what times", "when is", "earliest available"
+        "available",
+        "availability",
+        "office hours",
+        "free time",
+        "open slots",
+        "available slots",
+        "what times",
+        "when is",
+        "earliest available"
     ]
 
     booking_keywords = [
-        "book", "schedule", "appointment",
-        "meet", "meeting",
-        "see dr", "see doctor", "see my instructor",
-        "need to see", "want to see",
-        "talk to", "speak with", "discuss"
+        "book",
+        "schedule",
+        "appointment",
+        "meet",
+        "meeting",
+        "see dr",
+        "see doctor",
+        "see my instructor",
+        "need to see",
+        "want to see",
+        "talk to",
+        "speak with",
+        "discuss"
     ]
 
-    # Priority order matters
+    # Priority order matters:
+    # cancellation and rescheduling must be checked before booking
+    # because they may also contain the word "appointment".
     if any(keyword in text for keyword in cancel_keywords):
-        predicted_intent = "cancel_appointment"
+        return "cancel_appointment"
 
-    elif any(keyword in text for keyword in reschedule_keywords):
-        predicted_intent = "reschedule_appointment"
+    if any(keyword in text for keyword in reschedule_keywords):
+        return "reschedule_appointment"
 
-    elif any(keyword in text for keyword in booking_keywords):
-        predicted_intent = "book_appointment"
+    if any(keyword in text for keyword in availability_keywords):
+        return "check_availability"
 
-    elif any(keyword in text for keyword in availability_keywords):
-        predicted_intent = "check_availability"
+    if any(keyword in text for keyword in booking_keywords):
+        return "book_appointment"
 
-    # -----------------------------
-    # Urgency correction rules
-    # Only clear urgency phrases are corrected.
-    # -----------------------------
+    return predicted_intent
+
+
+def correct_urgency_for_booking(text, predicted_urgency):
+    text = clean_text(text)
+
     low_urgency_keywords = [
-        "not urgent", "no rush", "whenever possible",
-        "when you have time", "later", "next week",
-        "sometime", "when available", "just asking"
+        "not urgent",
+        "no rush",
+        "whenever possible",
+        "when you have time",
+        "later",
+        "next week",
+        "sometime",
+        "when available",
+        "just asking"
     ]
 
     high_urgency_keywords = [
-        "urgent", "urgently", "emergency",
-        "asap", "as soon as possible",
-        "immediate", "immediately",
-        "now", "right now", "today",
-        "very important", "important",
-        "critical", "serious issue",
-        "deadline", "final project",
-        "final exam", "must meet",
-        "need to see", "cannot wait"
+        "urgent",
+        "urgently",
+        "emergency",
+        "asap",
+        "as soon as possible",
+        "immediate",
+        "immediately",
+        "now",
+        "right now",
+        "today",
+        "very important",
+        "critical",
+        "serious issue",
+        "deadline",
+        "final project",
+        "final exam",
+        "must meet",
+        "need to see",
+        "cannot wait"
     ]
 
     normal_urgency_keywords = [
-        "tomorrow", "this week",
-        "assignment", "project",
-        "lecture", "course material",
+        "tomorrow",
+        "this week",
+        "assignment",
+        "project",
+        "lecture",
+        "course material",
         "need help"
     ]
 
     # Low first because "not urgent" contains the word "urgent"
     if any(keyword in text for keyword in low_urgency_keywords):
-        predicted_urgency = "low"
+        return "low"
 
-    elif any(keyword in text for keyword in high_urgency_keywords):
-        predicted_urgency = "high"
+    if any(keyword in text for keyword in high_urgency_keywords):
+        return "high"
 
-    elif any(keyword in text for keyword in normal_urgency_keywords):
+    if any(keyword in text for keyword in normal_urgency_keywords):
         if predicted_urgency != "high":
-            predicted_urgency = "normal"
+            return "normal"
 
-    return predicted_intent, predicted_urgency
+    return predicted_urgency
 
 # -----------------------------
-# AI prediction
+# AI prediction functions
 # -----------------------------
-def predict_request(request_text):
+def predict_intent(request_text):
     cleaned_text = clean_text(request_text)
-
     predicted_intent = intent_model.predict([cleaned_text])[0]
+    corrected_intent = correct_intent(cleaned_text, predicted_intent)
+    return corrected_intent
+
+
+def predict_urgency_for_booking(request_text):
+    cleaned_text = clean_text(request_text)
     predicted_urgency = urgency_model.predict([cleaned_text])[0]
-
-    corrected_intent, corrected_urgency = apply_rule_based_correction(
-        cleaned_text,
-        predicted_intent,
-        predicted_urgency
-    )
-
-    return corrected_intent, corrected_urgency
+    corrected_urgency = correct_urgency_for_booking(cleaned_text, predicted_urgency)
+    return corrected_urgency
 
 # -----------------------------
 # Urgency ranking helper
@@ -299,6 +361,7 @@ def get_urgency_rank(urgency):
 def get_instructors():
     query = "SELECT instructor_id, name, department FROM instructors"
     return pd.read_sql_query(query, conn)
+
 
 def get_available_slots(instructor_id):
     query = """
@@ -319,6 +382,7 @@ def get_available_slots(instructor_id):
     ORDER BY availability.day, availability.time
     """
     return pd.read_sql_query(query, conn, params=(instructor_id,))
+
 
 def get_slots_with_status(instructor_id):
     query = """
@@ -344,6 +408,7 @@ def get_slots_with_status(instructor_id):
     """
     return pd.read_sql_query(query, conn, params=(instructor_id,))
 
+
 def get_booked_appointments():
     query = """
     SELECT 
@@ -362,6 +427,7 @@ def get_booked_appointments():
     ORDER BY appointments.appointment_id
     """
     return pd.read_sql_query(query, conn)
+
 
 def get_active_appointments():
     query = """
@@ -386,8 +452,8 @@ def get_active_appointments():
 # -----------------------------
 # Scheduling functions
 # -----------------------------
-def book_appointment(student_name, instructor_id, day, time, request_text):
-    predicted_intent, predicted_urgency = predict_request(request_text)
+def book_appointment(student_name, instructor_id, day, time, request_text, predicted_urgency):
+    predicted_intent = "book_appointment"
 
     # Rule 1: The selected time must be within the instructor's office hours.
     cursor.execute("""
@@ -400,9 +466,7 @@ def book_appointment(student_name, instructor_id, day, time, request_text):
     if available_slot is None:
         return (
             False,
-            "This time is not within the instructor's office hours. Please select a valid office-hour slot.",
-            predicted_intent,
-            predicted_urgency
+            "This time is not within the instructor's office hours. Please select a valid office-hour slot."
         )
 
     # Rule 2: Check whether this instructor slot is already booked.
@@ -420,7 +484,6 @@ def book_appointment(student_name, instructor_id, day, time, request_text):
         new_priority = get_urgency_rank(predicted_urgency)
         existing_priority = get_urgency_rank(existing_urgency)
 
-        # New request has higher urgency than the existing appointment.
         if new_priority > existing_priority:
             message = (
                 f"This slot is already booked by another student with a {existing_urgency}-urgency appointment. "
@@ -428,7 +491,6 @@ def book_appointment(student_name, instructor_id, day, time, request_text):
                 "The system cannot automatically cancel another student's appointment, but it recommends contacting the instructor for priority review or choosing another available slot."
             )
 
-        # New request has lower urgency than the existing appointment.
         elif new_priority < existing_priority:
             message = (
                 f"This slot is already booked by a {existing_urgency}-urgency appointment, "
@@ -436,7 +498,6 @@ def book_appointment(student_name, instructor_id, day, time, request_text):
                 "The system recommends choosing another available slot."
             )
 
-        # Same urgency level.
         else:
             if predicted_urgency == "high":
                 message = (
@@ -450,7 +511,7 @@ def book_appointment(student_name, instructor_id, day, time, request_text):
                     "Please choose another available slot."
                 )
 
-        return False, message, predicted_intent, predicted_urgency
+        return False, message
 
     # Rule 3: The student cannot have two active appointments at the same time.
     cursor.execute("""
@@ -463,9 +524,7 @@ def book_appointment(student_name, instructor_id, day, time, request_text):
     if student_conflict is not None:
         return (
             False,
-            "You already have another appointment at this time. Please choose a different slot.",
-            predicted_intent,
-            predicted_urgency
+            "You already have another appointment at this time. Please choose a different slot."
         )
 
     # Rule 4: Save the appointment if all checks pass.
@@ -494,7 +553,8 @@ def book_appointment(student_name, instructor_id, day, time, request_text):
 
     conn.commit()
 
-    return True, "Appointment booked successfully.", predicted_intent, predicted_urgency
+    return True, "Appointment booked successfully."
+
 
 def cancel_appointment(appointment_id):
     cursor.execute("""
@@ -509,6 +569,7 @@ def cancel_appointment(appointment_id):
         return False, "Appointment not found or already cancelled."
 
     return True, "Appointment cancelled successfully."
+
 
 def reschedule_appointment(appointment_id, new_day, new_time):
     cursor.execute("""
@@ -576,10 +637,10 @@ st.markdown("""
         AI-Powered Smart Campus Appointment Scheduling System
     </h4>
     <p style="font-size:16px;">
-        UniMeet helps students book appointments with instructors using two trained machine learning models:
+        UniMeet helps students manage appointment requests with instructors using two trained machine learning models:
         an <b>Intent Classification Model</b> and an <b>Urgency Classification Model</b>.
-        The system also applies rule-based scheduling checks to validate instructor office hours,
-        prevent appointment conflicts, and provide urgency-aware recommendations when a requested slot is already booked.
+        The intent model routes the request to the correct action, while the urgency model is used only for booking requests
+        to support priority-aware scheduling decisions.
     </p>
 </div>
 """, unsafe_allow_html=True)
@@ -622,7 +683,7 @@ st.markdown("<br>", unsafe_allow_html=True)
 # Tabs
 # -----------------------------
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "Book Appointment",
+    "Request Assistant",
     "Appointments Dashboard",
     "Cancel Appointment",
     "Reschedule Appointment",
@@ -630,17 +691,15 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 ])
 
 # -----------------------------
-# Tab 1: Book Appointment
+# Tab 1: Request Assistant
 # -----------------------------
 with tab1:
-    st.header("Book a New Appointment")
+    st.header("Request Assistant")
 
     st.write(
-        "All instructor office-hour slots are shown below. If a slot is already booked, "
-        "the system still shows it so that urgency-aware recommendations can be provided."
+        "Write your request below. The AI intent model will analyze whether the request is for booking, "
+        "cancellation, rescheduling, availability checking, or a general inquiry."
     )
-
-    instructors_df = get_instructors()
 
     student_name = st.text_input("Student Name", placeholder="Enter your name")
 
@@ -649,67 +708,143 @@ with tab1:
         placeholder="Example: I urgently need to meet Dr. Sara about my project."
     )
 
-    instructor_options = {
-        f"{row['name']} - {row['department']}": row["instructor_id"]
-        for _, row in instructors_df.iterrows()
-    }
+    if "analyzed" not in st.session_state:
+        st.session_state.analyzed = False
 
-    selected_instructor_label = st.selectbox(
-        "Select Instructor",
-        list(instructor_options.keys())
-    )
+    if st.button("Analyze Request"):
+        if not student_name.strip():
+            st.error("Please enter the student name.")
+            st.session_state.analyzed = False
 
-    selected_instructor_id = instructor_options[selected_instructor_label]
+        elif not request_text.strip():
+            st.error("Please enter the appointment request.")
+            st.session_state.analyzed = False
 
-    slots_df = get_slots_with_status(selected_instructor_id)
+        else:
+            predicted_intent = predict_intent(request_text.strip())
 
-    if slots_df.empty:
-        st.warning("No office-hour slots found for this instructor.")
-    else:
-        slot_options = {}
+            st.session_state.analyzed = True
+            st.session_state.student_name = student_name.strip()
+            st.session_state.request_text = request_text.strip()
+            st.session_state.predicted_intent = predicted_intent
 
-        for _, row in slots_df.iterrows():
-            if row["slot_status"] == "Available":
-                label = f"{row['day']} at {row['time']} — Available"
+    if st.session_state.analyzed:
+        predicted_intent = st.session_state.predicted_intent
+
+        st.markdown("### AI Request Analysis")
+        st.info(f"Predicted Intent: {predicted_intent}")
+
+        if predicted_intent == "cancel_appointment":
+            st.warning(
+                "This request looks like a cancellation request. "
+                "The system will not create a new appointment. "
+                "Please use the Cancel Appointment tab to cancel an existing appointment."
+            )
+
+        elif predicted_intent == "reschedule_appointment":
+            st.warning(
+                "This request looks like a rescheduling request. "
+                "The system will not create a new appointment. "
+                "Please use the Reschedule Appointment tab to change an existing appointment."
+            )
+
+        elif predicted_intent == "check_availability":
+            st.info(
+                "This request looks like an availability inquiry. "
+                "You can review the instructor office-hour slots below. "
+                "If you want to book, rewrite the request as a clear booking request."
+            )
+
+            instructors_df = get_instructors()
+            instructor_options = {
+                f"{row['name']} - {row['department']}": row["instructor_id"]
+                for _, row in instructors_df.iterrows()
+            }
+
+            selected_instructor_label = st.selectbox(
+                "Select Instructor to View Slots",
+                list(instructor_options.keys()),
+                key="availability_instructor"
+            )
+
+            selected_instructor_id = instructor_options[selected_instructor_label]
+            slots_df = get_slots_with_status(selected_instructor_id)
+
+            st.dataframe(slots_df, use_container_width=True)
+
+        elif predicted_intent == "general_inquiry":
+            st.info(
+                "This request looks like a general inquiry. "
+                "The system will not create an appointment unless the request clearly indicates booking."
+            )
+
+        elif predicted_intent == "book_appointment":
+            predicted_urgency = predict_urgency_for_booking(st.session_state.request_text)
+
+            st.markdown("### Booking Request Detected")
+            st.info(f"Predicted Urgency: {predicted_urgency}")
+
+            st.write(
+                "Please select an instructor and an office-hour slot. "
+                "Booked slots are still displayed so the system can provide urgency-aware recommendations."
+            )
+
+            instructors_df = get_instructors()
+
+            instructor_options = {
+                f"{row['name']} - {row['department']}": row["instructor_id"]
+                for _, row in instructors_df.iterrows()
+            }
+
+            selected_instructor_label = st.selectbox(
+                "Select Instructor",
+                list(instructor_options.keys()),
+                key="booking_instructor"
+            )
+
+            selected_instructor_id = instructor_options[selected_instructor_label]
+            slots_df = get_slots_with_status(selected_instructor_id)
+
+            if slots_df.empty:
+                st.warning("No office-hour slots found for this instructor.")
             else:
-                label = f"{row['day']} at {row['time']} — Booked ({row['existing_urgency']} urgency)"
+                slot_options = {}
 
-            slot_options[label] = (row["day"], row["time"])
+                for _, row in slots_df.iterrows():
+                    if row["slot_status"] == "Available":
+                        label = f"{row['day']} at {row['time']} — Available"
+                    else:
+                        label = f"{row['day']} at {row['time']} — Booked ({row['existing_urgency']} urgency)"
 
-        selected_slot_label = st.selectbox(
-            "Select Office-Hour Slot",
-            list(slot_options.keys())
-        )
+                    slot_options[label] = (row["day"], row["time"])
 
-        selected_day, selected_time = slot_options[selected_slot_label]
-
-        if st.button("Book Appointment"):
-            if not student_name.strip():
-                st.error("Please enter the student name.")
-            elif not request_text.strip():
-                st.error("Please enter the appointment request.")
-            else:
-                success, message, predicted_intent, predicted_urgency = book_appointment(
-                    student_name=student_name.strip(),
-                    instructor_id=selected_instructor_id,
-                    day=selected_day,
-                    time=selected_time,
-                    request_text=request_text.strip()
+                selected_slot_label = st.selectbox(
+                    "Select Office-Hour Slot",
+                    list(slot_options.keys()),
+                    key="booking_slot"
                 )
 
-                st.markdown("### AI Prediction Result")
-                pred_col1, pred_col2 = st.columns(2)
+                selected_day, selected_time = slot_options[selected_slot_label]
 
-                with pred_col1:
-                    st.info(f"Predicted Intent: {predicted_intent}")
+                if st.button("Confirm Booking"):
+                    success, message = book_appointment(
+                        student_name=st.session_state.student_name,
+                        instructor_id=selected_instructor_id,
+                        day=selected_day,
+                        time=selected_time,
+                        request_text=st.session_state.request_text,
+                        predicted_urgency=predicted_urgency
+                    )
 
-                with pred_col2:
-                    st.info(f"Predicted Urgency: {predicted_urgency}")
+                    if success:
+                        st.success(message)
+                    else:
+                        st.warning(message)
 
-                if success:
-                    st.success(message)
-                else:
-                    st.warning(message)
+        else:
+            st.warning(
+                "The request could not be clearly routed. Please rewrite the request or use the correct tab."
+            )
 
 # -----------------------------
 # Tab 2: Dashboard
@@ -719,7 +854,7 @@ with tab2:
 
     st.write(
         "This dashboard displays all appointments stored in the SQLite database. "
-        "Each appointment includes the AI-predicted intent and urgency level."
+        "Booked appointments include the AI-predicted urgency level."
     )
 
     appointments_df = get_booked_appointments()
@@ -852,18 +987,23 @@ with tab5:
     - check_availability
     - general_inquiry
 
+    The intent model is used as a request router. If the request is not a booking request,
+    the system does not create an appointment and guides the user to the correct action.
+
     ### 2. Urgency Classification Model
-    This model predicts the urgency level of the request.
+    This model predicts the urgency level of booking requests only.
 
     Possible outputs:
     - low
     - normal
     - high
 
+    The urgency model is used only after the system confirms that the request is a booking request.
+
     ### Hybrid Inference Approach
     The trained machine learning models generate the initial predictions.
-    A limited rule-based correction layer is then applied only for clear cases such as urgent requests,
-    cancellations, rescheduling, and availability inquiries. This improves reliability while keeping
+    A limited rule-based correction layer is applied only for clear cases such as cancellation,
+    rescheduling, availability inquiries, and urgent phrases. This improves reliability while keeping
     the trained ML models as the main prediction component.
 
     ### ML Pipeline
@@ -878,15 +1018,16 @@ with tab5:
 
     ### Non-ML Component
     The scheduling engine uses deterministic rules to:
+    - route non-booking requests
     - check instructor office hours
     - prevent instructor time conflicts
     - prevent student time conflicts
-    - compare urgency levels when a conflict occurs
+    - compare urgency levels when a booking conflict occurs
     - provide priority-aware recommendations
     - save, cancel, and reschedule appointments
 
     ### Urgency-Aware Conflict Handling
-    If a student selects a slot that is already booked, the system compares the urgency level of the new request with the urgency level of the existing appointment.
+    If a student selects a slot that is already booked, the system compares the urgency level of the new booking request with the urgency level of the existing appointment.
 
     - If the new request has higher urgency, the system recommends contacting the instructor for priority review.
     - If the existing appointment has higher urgency, the system recommends choosing another available slot.
