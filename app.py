@@ -295,6 +295,7 @@ def correct_urgency_for_booking(text, predicted_urgency):
         "right now",
         "today",
         "very important",
+        "important",
         "critical",
         "serious issue",
         "deadline",
